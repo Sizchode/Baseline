@@ -1,91 +1,9 @@
 import os
 import numpy as np
 import pandas as pd
-from scipy.spatial.distance import cdist
-import io
-import pandas as pd
-from datetime import datetime
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from math import radians, sin, cos, sqrt, atan2
+import argparse
 import csv
-
-data_path = "/Users/liuzhenke/PycharmProjects/baseline st prediction/point_processed"
-
-#print(f"Checking path: {data_path}")
-
-csv_file_path = 'space-time-idw.csv'
-train_data = []
-# Iterate through each date in June 2019
-for day in range(1, 31):
-    # Format the date string
-    date_str = f"2019-06-{day:02d}"
-
-    # Construct the file path for train.csv
-    file_path = os.path.join(data_path, f"{date_str}/train.csv")
-
-    # Check if the file exists
-    if os.path.exists(file_path):
-        # Read the CSV file into a DataFrame
-        df = pd.read_csv(file_path)
-
-        # Extract the required columns (date, temperature, latitude, and longitude)
-        df_extracted = df[['temperture', 'lat', 'lon']].copy()
-
-        # Add the date column
-        df_extracted['date'] = date_str
-
-        # Reorder the columns
-        df_extracted = df_extracted[['date', 'temperture', 'lat', 'lon']]
-
-        # Append the DataFrame to the list
-        train_data.append(df_extracted)
-    else:
-        print(f"File not found for date {date_str}")
-
-train_data = pd.concat(train_data, ignore_index=True)
-
-    # Print the resulting DataFrame
-print("Train data")
-print(train_data)
-
-test_data = []
-
-# Iterate through each date in June 2019
-for day in range(1, 31):
-    # Format the date string
-    date_str = f"2019-06-{day:02d}"
-
-    # Construct the file path for train.csv
-    file_path = os.path.join(data_path, f"{date_str}/test.csv")
-
-    # Check if the file exists
-    if os.path.exists(file_path):
-        # Read the CSV file into a DataFrame
-        df = pd.read_csv(file_path)
-
-        # Extract the required columns (date, temperature, latitude, and longitude)
-        df_extracted = df[['temperture', 'lat', 'lon']].copy()
-
-        # Add the date column
-        df_extracted['date'] = date_str
-
-        # Reorder the columns
-        df_extracted = df_extracted[['date', 'temperture', 'lat', 'lon']]
-
-        # Append the DataFrame to the list
-        test_data.append(df_extracted)
-    else:
-        print(f"File not found for date {date_str}")
-
-test_data = pd.concat(test_data, ignore_index=True)
-
-    # Print the resulting DataFrame
-print("\n Test data")
-print(test_data)
-
-train_data.to_csv("train_data.csv", index=False)
-test_data.to_csv("test_data.csv",index=False)
-
 
 def calculate_space_time_distances(target_date, target_sensor, data, alpha):
     distances = []
@@ -104,19 +22,14 @@ def idw_prediction(target_sensor, nearest_sensors, alpha, power=2):
     values = []
 
     for sensor, distance in nearest_sensors:
-        # Calculating the inverse distance weight
         weight = 1 / (distance ** power)
         weights.append(weight)
-
-        # Extracting the value from the sensor
-        value = sensor.temperture  # Assuming temperature is the value of interest
+        value = sensor.temperture
         values.append(value)
 
-    # Avoid division by zero
     if sum(weights) == 0:
         return np.nan
 
-    # Calculate the IDW prediction with weighted alpha
     weighted_alpha = np.array(weights) * alpha
     weighted_distance_sum = np.sum(weighted_alpha)
     idw_prediction = np.sum(np.array(values) * weighted_alpha) / weighted_distance_sum
@@ -124,77 +37,78 @@ def idw_prediction(target_sensor, nearest_sensors, alpha, power=2):
     return idw_prediction
 
 def select_nearest_sensors(k, distances):
-    sorted_distances = sorted(distances, key=lambda x: x[1])  # Sort by combined distance
-    nearest_sensors = sorted_distances[:k]  # Selecting the top k nearest sensors
+    sorted_distances = sorted(distances, key=lambda x: x[1])
+    nearest_sensors = sorted_distances[:k]
     return nearest_sensors
 
-alpha = 0.5  # You can adjust the alpha parameter
+def main():
+    # Argument parsing
+    parser = argparse.ArgumentParser(description="Space-Time IDW Model")
+    parser.add_argument("--train_data_path", type=str, required=True, help="Path to the training data CSV file")
+    parser.add_argument("--test_data_path", type=str, required=True, help="Path to the testing data CSV file")
+    parser.add_argument("--output_csv", type=str, required=True, help="Path to save the output CSV file")
+    parser.add_argument("--alpha", type=float, default=0.5, help="Alpha parameter for spatial-temporal distance weighting")
+    parser.add_argument("--k", type=int, default=300, help="Number of nearest sensors to consider")
+    parser.add_argument("--power", type=float, default=2, help="Power parameter for inverse distance weighting")
+    args = parser.parse_args()
 
-predictions = []
+    # Load data
+    train_data = pd.read_csv(args.train_data_path)
+    test_data = pd.read_csv(args.test_data_path)
 
-for test_row in test_data.itertuples(index=False):
-    target_date = test_row.date
-    target_sensor = pd.DataFrame([[test_row.date, test_row.temperture, test_row.lat, test_row.lon]],
-                                 columns=['date', 'temperture', 'lat', 'lon'])
+    predictions = []
+    alpha = args.alpha
+    k = args.k
+    power = args.power
 
-    # Calculate distances with alpha
-    distances = calculate_space_time_distances(target_date, target_sensor, [train_data], alpha)
+    for test_row in test_data.itertuples(index=False):
+        target_date = test_row.date
+        target_sensor = pd.DataFrame([[test_row.date, test_row.temperture, test_row.lat, test_row.lon]],
+                                     columns=['date', 'temperture', 'lat', 'lon'])
 
-    # Select k nearest sensors
-    k = 300
-    nearest_sensors = select_nearest_sensors(k, distances)
+        # Calculate distances with alpha
+        distances = calculate_space_time_distances(target_date, target_sensor, [train_data], alpha)
 
-    # Make IDW prediction with alpha
-    idw_result = idw_prediction(target_sensor, nearest_sensors, alpha)
-    predictions.append((target_date, test_row.lat, test_row.lon,test_row.temperture, idw_result))
+        # Select k nearest sensors
+        nearest_sensors = select_nearest_sensors(k, distances)
 
-# Display the predictions
-for date, lat, lon,temperture, prediction in predictions:
-    print(f"IDW Prediction for Date: {date}, Lat: {lat}, Lon: {lon}, actual temp: {temperture} - prediction {prediction}")
+        # Make IDW prediction with alpha and power
+        idw_result = idw_prediction(target_sensor, nearest_sensors, alpha, power)
+        predictions.append((target_date, test_row.lat, test_row.lon, test_row.temperture, idw_result))
 
-print(predictions)
+    # Display the predictions
+    for date, lat, lon, temperture, prediction in predictions:
+        print(f"IDW Prediction for Date: {date}, Lat: {lat}, Lon: {lon}, actual temp: {temperture} - prediction {prediction}")
 
+    # Writing data to CSV file
+    with open(args.output_csv, 'w', newline='') as csvfile:
+        csv_writer = csv.writer(csvfile)
+        csv_writer.writerow(['Date', 'Lat', 'Lon', 'Actual Temp', 'Prediction'])
+        csv_writer.writerows(predictions)
 
-# Writing data to CSV file
-with open(csv_file_path, 'w', newline='') as csvfile:
-    # Create a CSV writer object
-    csv_writer = csv.writer(csvfile)
+    print(f'Data has been successfully stored in {args.output_csv}')
 
-    # Write the header
-    csv_writer.writerow(['Date', 'Lat', 'Lon', 'Actual Temp', 'Prediction'])
+    # Load the output CSV for evaluation
+    df = pd.read_csv(args.output_csv)
+    actual_temps = df['Actual Temp']
+    predictions = df['Prediction']
 
-    # Write the data
-    csv_writer.writerows(predictions)
+    mae = mean_absolute_error(actual_temps, predictions)
+    rmse = np.sqrt(mean_squared_error(actual_temps, predictions))
+    r2 = r2_score(actual_temps, predictions)
 
-print(f'Data has been successfully stored in {csv_file_path}')
+    # Add new columns to the DataFrame
+    df['MAE'] = mae
+    df['RMSE'] = rmse
+    df['R²'] = r2
 
-df = pd.read_csv("space-time-idw.csv")
+    # Save the updated DataFrame to CSV
+    df.to_csv(args.output_csv, index=False)
 
-# Extract Actual Temp and Prediction columns
-actual_temps = df['Actual Temp']
-predictions = df['Prediction']
+    # Print results
+    print(f"MAE: {mae}")
+    print(f"RMSE: {rmse}")
+    print(f"R²: {r2}")
 
-actual_temps = df['Actual Temp']
-predictions = df['Prediction']
-
-mae = mean_absolute_error(actual_temps, predictions)
-
-# Calculate RMSE
-rmse = np.sqrt(mean_squared_error(actual_temps, predictions))
-
-# Calculate R²
-r2 = r2_score(actual_temps, predictions)
-
-# Add new columns to the DataFrame
-df['MAE'] = mae
-df['RMSE'] = rmse
-df['R²'] = r2
-
-# Save the updated DataFrame to CSV
-df.to_csv("space-time-idw.csv", index=False)
-
-# Print results
-print("MAE:", mae)
-print("RMSE:", rmse)
-print("R²:", r2)
-
+if __name__ == "__main__":
+    main()
